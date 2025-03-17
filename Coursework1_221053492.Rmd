@@ -1,0 +1,255 @@
+---
+title: "MTH6139 Time Series" 
+subtitle: "Coursework 1 - CO2 Forecasting with Prophet" 
+author: "Luka Liegis, 221053492" 
+date: "Spring term 2025" 
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    theme: spacelab 
+    highlight: tango
+---
+
+```{r, echo=FALSE}
+# This code will display the QMUL logo at the top right of the page
+# Do not change this code
+htmltools::img(src = knitr::image_uri("images/QMlogo.png"),
+               alt = 'logo',
+               style = 'position:absolute; top:0; right:0; padding:10px; width:20%;')
+```
+
+# 1. Introduction
+
+In this project, I explore the application of Meta's Prophet forecasting system to analyze time series data. Prophet is an open-source forecasting tool developed by Meta that is designed to handle time series with strong seasonal effects and multiple seasons of historical data.
+
+## 1.1 Meta's Prophet
+
+Prophet is a procedure for forecasting time series data based on an additive model where non-linear trends are fit with yearly, weekly, and daily seasonality, including holiday effects. It works best with time series that have strong seasonal effects and several seasons of historical data.
+
+The model equation in Prophet can be represented as:
+
+$$y(t) = g(t) + s(t) + h(t) + \epsilon_t$$
+
+Where: - $g(t)$ is the trend component - $s(t)$ is the seasonality component - $h(t)$ is the holiday effect - $\epsilon_t$ is the error term
+
+## 1.2 Dataset: Atmospheric CO2 Concentrations
+
+For this analysis, I will be using the CO2 dataset available in R, which contains atmospheric carbon dioxide measurements from the Mauna Loa Observatory in Hawaii from 1959 to 1997. This dataset is particularly interesting because:
+
+-   It shows both long-term trends (increasing CO2 levels due to human activities)
+-   It displays clear seasonal patterns (annual cycles)
+
+Let's first load the necessary libraries and examine the data:
+
+```{r setup, message=FALSE, warning=FALSE}
+# Load libraries
+library(prophet)
+library(zoo)
+library(dplyr)
+library(ggplot2)
+```
+
+# 2. Data Exploration
+
+## 2.1 Understanding the CO2 Dataset
+
+Let's first examine the CO2 dataset structure and visualize the raw data:
+
+```{r co2-exploration}
+# Load and examine the CO2 dataset
+data(co2)
+class(co2)
+str(co2)
+start(co2)
+end(co2)
+frequency(co2)
+
+# Basic summary statistics
+summary(co2)
+
+# Plot the raw time series
+plot(co2, main="Monthly Atmospheric CO2 Concentration", 
+     ylab="CO2 (ppm)", xlab="Year")
+```
+
+## 2.2 Basic Time Series Analysis
+
+Before applying Prophet, basic analysis is performed to understand the characteristics of the CO2 time series:
+
+```{r basic-analysis}
+# Calculate growth rate
+annual_growth <- 100 * mean(diff(co2, lag=12), na.rm=TRUE) / mean(co2)
+cat("Average annual growth rate:", round(annual_growth, 2), "%\n")
+
+# Decompose the time series to see trend, seasonal, and random components
+co2_decomp <- decompose(co2)
+plot(co2_decomp)
+
+# Linear trend analysis
+time_index <- 1:length(co2)
+linear_model <- lm(co2 ~ time_index)
+summary(linear_model)
+
+# Visualize with trend line
+plot(co2, main="CO2 with Linear Trend", ylab="CO2 (ppm)", xlab="Year")
+abline(linear_model, col="red")
+```
+
+# 3. Prophet Implementation
+
+## 3.1 Data Preparation for Prophet
+
+Prophet requires a specific format for input data - a dataframe with columns 'ds' (date) and 'y' (value):
+
+```{r prophet-data-prep}
+# Convert ts object to dataframe for Prophet
+co2_df <- data.frame(
+  ds = zoo::as.yearmon(time(co2)),
+  y = as.numeric(co2)
+)
+
+# Display the first few rows
+head(co2_df)
+```
+
+## 3.2 Basic Prophet Model
+
+Now let's implement Prophet:
+
+```{r basic-prophet}
+# Create and fit the basic Prophet model
+model <- prophet(co2_df)
+
+# Create future dataframe for forecasting (8 quarters ahead)
+future <- make_future_dataframe(model, periods=8, freq="quarter")
+
+# Make predictions
+forecast <- predict(model, future)
+
+# Display forecast components
+head(forecast[, c("ds", "yhat", "yhat_lower", "yhat_upper")])
+
+# Visualize the forecast
+plot(model, forecast)
+
+# Plot the components of the forecast
+prophet_plot_components(model, forecast)
+```
+
+# 4. Enhanced Prophet Models
+
+## 4.1 Model with Adjusted Seasonality
+
+Let's explore how different seasonality settings affect the forecast:
+
+```{r seasonality-model}
+# Model with multiplicative seasonality
+model_mult <- prophet(co2_df, 
+                     seasonality.mode = "multiplicative")
+forecast_mult <- predict(model_mult, future)
+
+# Compare forecasts
+plot(model_mult, forecast_mult)
+prophet_plot_components(model_mult, forecast_mult)
+```
+
+## 4.2 Model with Adjusted Changepoints
+
+The trend flexibility can be adjusted by modifying the changepoint parameters:
+
+```{r changepoint-model}
+# Model with more flexible trend
+model_flexible <- prophet(co2_df, 
+                         changepoint.prior.scale = 0.5)
+forecast_flexible <- predict(model_flexible, future)
+
+# Compare trends
+plot(model_flexible, forecast_flexible)
+```
+
+## 4.3 Interactive Visualization
+
+Let's create an interactive visualization of our forecast:
+
+```{r interactive-viz, message=FALSE, warning=FALSE}
+library(plotly)
+
+# Create interactive plot
+plot_ly() %>%
+  add_lines(x = ~co2_df$ds, y = ~co2_df$y, 
+            name = "Historical", line = list(color = "black")) %>%
+  add_lines(x = ~forecast$ds, y = ~forecast$yhat, 
+            name = "Forecast", line = list(color = "blue")) %>%
+  add_ribbons(x = ~forecast$ds, 
+             ymin = ~forecast$yhat_lower, 
+             ymax = ~forecast$yhat_upper,
+             name = "Uncertainty", 
+             fillcolor = "rgba(0, 0, 255, 0.2)") %>%
+  layout(title = "CO2 Concentration Forecast",
+         xaxis = list(title = "Date"),
+         yaxis = list(title = "CO2 (ppm)"))
+```
+
+# 5. Model Comparison and Evaluation
+
+Let's compare the different models we've created:
+
+```{r model-comparison}
+# Extract and combine prediction results
+results <- data.frame(
+  Date = tail(forecast$ds, 8),
+  Basic = tail(forecast$yhat, 8),
+  Multiplicative = tail(forecast_mult$yhat, 8),
+  Flexible = tail(forecast_flexible$yhat, 8)
+)
+
+# Display comparison table
+knitr::kable(results, caption = "Forecast Comparison for Next 8 Quarters")
+
+# Calculate metrics for in-sample fit
+# Use the last 12 data points as a test set
+train_df <- head(co2_df, nrow(co2_df) - 12)
+test_df <- tail(co2_df, 12)
+
+# Train models on training data
+model_train <- prophet(train_df)
+future_train <- make_future_dataframe(model_train, periods=12, freq="month")
+forecast_train <- predict(model_train, future_train)
+
+# Calculate RMSE
+forecast_values <- tail(forecast_train$yhat, 12)
+actual_values <- test_df$y
+rmse <- sqrt(mean((forecast_values - actual_values)^2))
+cat("Root Mean Square Error (RMSE):", round(rmse, 3), "ppm\n")
+
+# Calculate MAPE
+mape <- 100 * mean(abs((forecast_values - actual_values) / actual_values))
+cat("Mean Absolute Percentage Error (MAPE):", round(mape, 3), "%\n")
+```
+
+# 6. Discussion and Interpretation
+
+Based on the analysis and forecasting results, we can draw several insights:
+
+1.  **Long-term Trend**: The CO2 concentration shows a clear upward trend over time, increasing at an average rate of 0.37% per year.
+
+2.  **Seasonality**: There is a distinct seasonal pattern in the CO2 data, with peaks typically occurring in March, April and May and troughs in October and November.
+
+3.  **Forecast Accuracy**: The Prophet model achieved a RMSE of 0.626 ppm and a MAPE of 0.147%.
+
+4.  **Future Projections**: Based on the forecast, CO2 levels are expected to reach 366 ppm by the year 2000, continuing the concerning upward trend.
+
+# 7. Conclusion
+
+In this project, I demonstrated the application of Meta's Prophet forecasting system to analyze atmospheric CO2 concentration data. The Prophet model effectively captured both the long-term trend and seasonal patterns in the data, providing valuable insights and accurate forecasts.
+
+The results highlight the continued increase in atmospheric CO2 levels, which has significant implications for climate change and environmental policy. The forecasting approach demonstrated here could be applied to other environmental time series to support decision-making and planning.
+
+Prophet proved to be a powerful and flexible tool for time series forecasting, allowing for easy incorporation of seasonal patterns and trend changes with almost no manual configuration.
+
+# References
+
+-   Taylor, S. J., & Letham, B. (2018). Forecasting at scale. The American Statistician, 72(1), 37-45.
+-   Meta Prophet documentation: <https://facebook.github.io/prophet/>
+-   R Documentation for the CO2 dataset: `?co2`
